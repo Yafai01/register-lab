@@ -1,0 +1,659 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Learn x86-64 assembly by stepping through code and watching values move between registers, flags, the stack and memory.">
+<title>The Register Lab</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: lesson + code on the left, a "silicon die" machine on the right whose panels animate as instructions run */
+:root{
+  --bg:#E8ECF1; --panel:#FFFFFF; --sunk:#F2F4F7; --ink:#131C2C; --muted:#56637A; --line:#CCD4DF; --pin:#A9B3C2;
+  --accent:#D9480F; --accent-soft:#FFE6D6; --on-accent:#FFFFFF;
+  --on:#0B8A5C; --on-soft:#D6F2E5; --err:#C42B2B; --err-soft:#FBE3E3;
+  --c-op:#1E4FD0; --c-reg:#0B776B; --c-num:#B0327F; --c-lbl:#8A5A00; --c-cmt:#7A8599;
+  --f-display:"Chakra Petch", "Segoe UI", system-ui, sans-serif;
+  --f-body:"IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono:"IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0B111C; --panel:#121A28; --sunk:#0E1521; --ink:#E3E9F2; --muted:#8B98AE; --line:#243049; --pin:#3A4661;
+  --accent:#FF8A3D; --accent-soft:#3A2415; --on-accent:#1C0F05;
+  --on:#3DD598; --on-soft:#10362A; --err:#FF7070; --err-soft:#3A1717;
+  --c-op:#82A8FF; --c-reg:#4FD1BF; --c-num:#F38BC8; --c-lbl:#E8B54F; --c-cmt:#6C788E;
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0B111C; --panel:#121A28; --sunk:#0E1521; --ink:#E3E9F2; --muted:#8B98AE; --line:#243049; --pin:#3A4661;
+  --accent:#FF8A3D; --accent-soft:#3A2415; --on-accent:#1C0F05;
+  --on:#3DD598; --on-soft:#10362A; --err:#FF7070; --err-soft:#3A1717;
+  --c-op:#82A8FF; --c-reg:#4FD1BF; --c-num:#F38BC8; --c-lbl:#E8B54F; --c-cmt:#6C788E;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:15px/1.55 var(--f-body);
+  padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));padding-block:20px 48px}
+.wrap{max-width:1260px;margin:0 auto;display:flex;flex-direction:column;gap:22px}
+code,kbd{font-family:var(--f-mono);font-size:.92em}
+p code{background:var(--sunk);border:1px solid var(--line);padding:0 4px;border-radius:3px}
+button{font:600 14px var(--f-body);color:var(--ink);background:var(--panel);border:1.5px solid var(--line);border-radius:6px;padding:8px 14px;cursor:pointer}
+button:hover{border-color:var(--muted)}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+
+/* header */
+.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px}
+.brand{display:flex;gap:14px;align-items:center}
+.brand svg{flex:none}
+.brand h1{font:700 clamp(26px,4vw,36px)/1 var(--f-display);margin:0;letter-spacing:.01em}
+.brand p{margin:4px 0 0;color:var(--muted);max-width:52ch}
+.lessons{display:flex;flex-wrap:wrap;gap:6px}
+.lessons button{font:500 13px var(--f-display);padding:6px 10px;display:flex;gap:6px;align-items:center;letter-spacing:.02em}
+.lessons button .n{font-family:var(--f-mono);color:var(--muted);font-size:12px}
+.lessons button.active{border-color:var(--ink);background:var(--ink);color:var(--bg)}
+.lessons button.active .n{color:inherit;opacity:.7}
+.lessons button.done::after{content:"";width:7px;height:7px;border-radius:50%;background:var(--on)}
+
+/* main grid */
+.lab{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);gap:28px;align-items:start}
+@media (max-width:920px){.lab{grid-template-columns:minmax(0,1fr)}}
+.lesson{display:flex;flex-direction:column;gap:14px;min-width:0}
+.eyebrow{font:600 12px var(--f-mono);text-transform:uppercase;letter-spacing:.12em;color:var(--accent)}
+.lesson h2{font:700 clamp(24px,3vw,30px)/1.15 var(--f-display);margin:0;text-wrap:balance}
+.prose{max-width:62ch;display:flex;flex-direction:column;gap:10px}
+.prose p{margin:0}
+
+/* code */
+.codebox{background:var(--panel);border:1.5px solid var(--line);border-radius:8px;overflow:hidden}
+.codebar{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px 6px 14px;border-bottom:1px solid var(--line);background:var(--sunk);font:500 12px var(--f-mono);color:var(--muted)}
+.codebar button{padding:4px 10px;font-size:12px}
+.listing{list-style:none;margin:0;padding:8px 0;font:14px/1.75 var(--f-mono);overflow-x:auto}
+.listing li{display:flex;white-space:pre;padding-right:14px;position:relative;transition:background .25s}
+.listing .ln{width:44px;flex:none;text-align:right;padding-right:14px;color:var(--c-cmt);user-select:none}
+.listing li.cur{background:var(--accent-soft)}
+.listing li.cur .ln{color:var(--accent);font-weight:600}
+.listing li.cur .ln::before{content:"▶ ";font-size:10px}
+.listing li.ran{animation:ran .6s ease-out}
+.listing li.bad{background:var(--err-soft)}
+@keyframes ran{from{background:var(--accent)}to{background:transparent}}
+.t-op{color:var(--c-op);font-weight:600}.t-reg{color:var(--c-reg)}.t-num{color:var(--c-num)}.t-lbl{color:var(--c-lbl);font-weight:600}.t-cmt{color:var(--c-cmt);font-style:italic}.t-ref{color:var(--c-lbl)}
+#editor{display:block;width:100%;min-height:260px;border:0;resize:vertical;padding:12px 14px;background:var(--panel);color:var(--ink);font:14px/1.75 var(--f-mono);tab-size:4}
+
+.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.speed{display:flex;align-items:center;gap:8px;margin-left:auto;font:500 12px var(--f-mono);color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.speed input{width:110px;accent-color:var(--accent)}
+.narrator{background:var(--panel);border:1.5px solid var(--line);border-left:4px solid var(--accent);border-radius:6px;padding:12px 14px;min-height:72px}
+.narrator .ins{font:600 13px var(--f-mono);color:var(--accent);display:block;margin-bottom:2px}
+.narrator.error{border-left-color:var(--err);background:var(--err-soft)}
+.narrator.error .ins{color:var(--err)}
+.narrator.end{border-left-color:var(--on)}
+.hint{color:var(--muted);font-size:13px}
+.hint kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 5px;background:var(--panel)}
+
+.predict{border:1.5px dashed var(--line);border-radius:8px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.predict h3{margin:0;font:600 13px var(--f-mono);text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+.predict p{margin:0}
+.predict form{display:flex;gap:8px;flex-wrap:wrap}
+.predict input{font:500 15px var(--f-mono);padding:7px 10px;width:140px;border:1.5px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink)}
+.verdict{font-weight:500}
+.verdict.ok{color:var(--on)}.verdict.no{color:var(--err)}
+.nextrow{display:flex;justify-content:flex-end}
+
+/* machine: a chip die with pins */
+.machine{position:relative;background:var(--sunk);border:1.5px solid var(--line);border-radius:10px;padding:22px 18px 18px;display:flex;flex-direction:column;gap:14px;min-width:0;margin-block:8px}
+.machine::before,.machine::after{content:"";position:absolute;left:28px;right:28px;height:8px;background:repeating-linear-gradient(90deg,var(--pin) 0 7px,transparent 7px 18px)}
+.machine::before{top:-9px;border-radius:2px 2px 0 0}
+.machine::after{bottom:-9px}
+.die{position:absolute;top:6px;right:14px;font:500 10px var(--f-mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px;min-width:0}
+.panel h3{margin:0 0 10px;font:600 11px var(--f-mono);text-transform:uppercase;letter-spacing:.14em;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
+.regs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+@media (max-width:440px){.regs{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.reg{border:1.5px solid var(--line);border-radius:6px;padding:7px 9px;background:var(--panel);min-width:0}
+.reg .nm{font:700 13px var(--f-display);letter-spacing:.08em;display:flex;justify-content:space-between;gap:6px}
+.reg .nm small{font:400 10px var(--f-mono);color:var(--muted);letter-spacing:0;text-transform:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.reg .v{font:600 20px/1.3 var(--f-mono);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.reg .h{font:400 11px var(--f-mono);color:var(--muted);overflow-wrap:anywhere}
+.reg.zero .v{color:var(--muted)}
+.reg.hot{animation:hot .9s ease-out}
+.reg.rip{background:var(--sunk);border-style:dashed}
+.reg.rip .v{font-size:16px}
+@keyframes hot{0%{border-color:var(--accent);background:var(--accent-soft);transform:scale(1.04)}100%{border-color:var(--line);transform:scale(1)}}
+.row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+@media (max-width:520px){.row{grid-template-columns:minmax(0,1fr)}}
+.alu{font:600 17px var(--f-mono);min-height:30px;display:flex;align-items:center;overflow-wrap:anywhere}
+.alu.idle{font:400 13px var(--f-body);color:var(--muted)}
+.alu.flash{animation:aluf .8s ease-out}
+@keyframes aluf{0%{color:var(--accent);transform:translateX(-4px)}100%{transform:none}}
+.flags{display:flex;flex-wrap:wrap;gap:6px}
+.flag{display:flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:3px 10px 3px 7px;font:600 12px var(--f-mono)}
+.flag i{width:10px;height:10px;border-radius:50%;background:var(--line);transition:background .3s, box-shadow .3s}
+.flag.on{border-color:var(--on);background:var(--on-soft)}
+.flag.on i{background:var(--on);box-shadow:0 0 0 3px var(--on-soft),0 0 8px var(--on)}
+.flag span{color:var(--muted);font-weight:400}
+.flag.pulse{animation:hot .8s ease-out}
+.cells{display:flex;flex-direction:column;gap:4px;max-height:250px;overflow:auto}
+.cell{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:center;font:13px var(--f-mono);border:1px solid var(--line);border-radius:4px;padding:4px 8px;font-variant-numeric:tabular-nums}
+.cell .addr{color:var(--muted);font-size:11px}
+.cell .lbl{color:var(--c-lbl);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cell .val{font-weight:600;text-align:right}
+.cell.touch{animation:hot .9s ease-out}
+.cell.top{border-color:var(--accent)}
+.cell .ptr{grid-column:1/-1;font-size:10px;color:var(--accent);font-weight:600;letter-spacing:.08em;margin-top:-2px}
+.cell.new{animation:drop .5s cubic-bezier(.2,.9,.3,1.3)}
+@keyframes drop{from{transform:translateY(-14px);opacity:0}to{transform:none;opacity:1}}
+.empty{margin:0;color:var(--muted);font-size:13px}
+.bits{display:flex;gap:10px;flex-wrap:wrap}
+.nib{display:flex;gap:4px}
+.bit{width:20px;display:flex;flex-direction:column;align-items:center;gap:2px;font:10px var(--f-mono);color:var(--muted)}
+.bit i{width:18px;height:18px;border-radius:4px;border:1px solid var(--line);background:var(--sunk);transition:background .35s, box-shadow .35s}
+.bit.on i{background:var(--accent);border-color:var(--accent);box-shadow:0 0 8px var(--accent)}
+.bitsnote{font:12px var(--f-mono);color:var(--muted);margin-top:8px}
+.flyer{position:fixed;left:0;top:0;z-index:50;pointer-events:none;background:var(--accent);color:var(--on-accent);font:700 14px var(--f-mono);padding:3px 9px;border-radius:5px;box-shadow:0 6px 18px rgba(0,0,0,.25);white-space:nowrap}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+</style>
+<style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <svg width="46" height="46" viewBox="0 0 46 46" aria-hidden="true">
+        <g fill="var(--pin)"><rect x="12" y="1" width="3" height="7"/><rect x="21.5" y="1" width="3" height="7"/><rect x="31" y="1" width="3" height="7"/><rect x="12" y="38" width="3" height="7"/><rect x="21.5" y="38" width="3" height="7"/><rect x="31" y="38" width="3" height="7"/><rect x="1" y="12" width="7" height="3"/><rect x="1" y="21.5" width="7" height="3"/><rect x="1" y="31" width="7" height="3"/><rect x="38" y="12" width="7" height="3"/><rect x="38" y="21.5" width="7" height="3"/><rect x="38" y="31" width="7" height="3"/></g>
+        <rect x="8" y="8" width="30" height="30" rx="4" fill="var(--ink)"/>
+        <text x="23" y="28" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="600" font-size="12" fill="var(--accent)">asm</text>
+      </svg>
+      <div>
+        <h1>The Register Lab</h1>
+        <p>Step through real x86-64 instructions and watch values move between registers, flags, the stack and memory.</p>
+      </div>
+    </div>
+    <nav class="lessons" id="nav" aria-label="Lessons"></nav>
+  </header>
+
+  <main class="lab">
+    <section class="lesson">
+      <div class="eyebrow" id="eyebrow"></div>
+      <h2 id="ltitle"></h2>
+      <div class="prose" id="lbody"></div>
+      <div class="codebox">
+        <div class="codebar"><span id="fname">program.asm</span><button id="editBtn" type="button">Edit code</button></div>
+        <ol class="listing" id="listing"></ol>
+        <textarea id="editor" spellcheck="false" aria-label="Assembly source" hidden></textarea>
+      </div>
+      <div class="controls">
+        <button class="primary" id="stepBtn" type="button">Step ▶</button>
+        <button id="runBtn" type="button">Run</button>
+        <button id="resetBtn" type="button">Reset</button>
+        <label class="speed" for="speed">Speed <input type="range" id="speed" min="1" max="5" value="3"></label>
+      </div>
+      <div class="narrator" id="narr" aria-live="polite"></div>
+      <div class="hint">Shortcut: press <kbd>→</kbd> to step.</div>
+      <div class="predict" id="predict">
+        <h3>Predict it</h3>
+        <p id="pq"></p>
+        <form id="pform"><input id="pin" inputmode="numeric" autocomplete="off" placeholder="your answer" aria-label="Your answer"><button type="submit">Check</button></form>
+        <div class="verdict" id="verdict"></div>
+      </div>
+      <div class="nextrow"><button id="nextBtn" type="button">Next lesson →</button></div>
+    </section>
+
+    <section class="machine" aria-label="CPU state">
+      <span class="die">x86-64 core · simulated</span>
+      <div class="panel"><h3>Registers <span>64-bit general purpose</span></h3><div class="regs" id="regs"></div></div>
+      <div class="row">
+        <div class="panel"><h3>ALU</h3><div class="alu idle" id="alu">Idle. Math shows its work here.</div></div>
+        <div class="panel"><h3>Flags</h3><div class="flags" id="flags"></div></div>
+      </div>
+      <div class="panel"><h3><span id="bitsTitle">Bits of RAX</span><span>low 16</span></h3><div class="bits" id="bits"></div><div class="bitsnote" id="bitsNote"></div></div>
+      <div class="row">
+        <div class="panel"><h3>Stack <span>grows down ↓</span></h3><div class="cells" id="stack"></div></div>
+        <div class="panel" id="memPanel"><h3>Memory <span>.data</span></h3><div class="cells" id="mem"></div></div>
+      </div>
+    </section>
+  </main>
+</div>
+<div id="layer"></div>
+
+<script>
+const LESSONS = [
+{ nav:'Registers', title:'Registers are tiny boxes',
+  body:`<p>A CPU can't do math on numbers sitting out in RAM. It loads the ones it's working on into <b>registers</b>: a handful of fast storage slots built into the chip. x86-64 has 16 general-purpose registers, each 64 bits wide. The machine on the right shows eight of them.</p>
+<p><code>mov dst, src</code> copies a value into <code>dst</code>. The name is misleading: it copies, so the source keeps its value. Press <b>Step</b> and watch each number fly to its register.</p>`,
+  code:`; Put numbers into registers
+mov rax, 5
+mov rbx, 10
+mov rcx, rax      ; copy RAX into RCX
+mov rax, 0
+hlt`, predict:{reg:'rcx', q:'When the program stops, what number is in RCX?'} },
+
+{ nav:'Math & flags', title:'Math, and the flags it leaves behind',
+  body:`<p><code>add</code> and <code>sub</code> do the math and store the answer in the first operand. Every result also sets <b>flags</b>, single bits that describe it:</p>
+<p><code>ZF</code> (zero) turns on when the result is 0. <code>SF</code> (sign) turns on when it's negative. <code>CF</code> (carry) turns on when unsigned math wraps around, like 0 − 1. Later lessons use these flags to make decisions.</p>`,
+  code:`mov rax, 7
+add rax, 3        ; rax = 10
+sub rax, 10       ; watch ZF
+sub rax, 1        ; watch SF and CF
+inc rax
+hlt`, predict:{reg:'rax', q:'What is in RAX at the end?'} },
+
+{ nav:'Loops', title:'Loops are just jumps',
+  body:`<p>Assembly has no <code>for</code> or <code>while</code>. You build loops by jumping. A label like <code>again:</code> names a spot in the code.</p>
+<p><code>dec rcx</code> subtracts 1 and turns on ZF when RCX reaches 0. <code>jnz again</code> means "jump if not zero": while ZF is off, the CPU goes back to <code>again</code>. This program adds 5 + 4 + 3 + 2 + 1.</p>`,
+  code:`mov rcx, 5        ; loop counter
+mov rax, 0        ; running total
+again:
+add rax, rcx
+dec rcx
+jnz again         ; repeat until RCX = 0
+hlt`, predict:{reg:'rax', q:'What total ends up in RAX?'} },
+
+{ nav:'The stack', title:'The stack: last in, first out',
+  body:`<p>The stack is a pile of 8-byte slots in memory. <code>RSP</code> (stack pointer) holds the address of the top slot.</p>
+<p><code>push</code> moves RSP down by 8 and writes a value there. <code>pop</code> reads the top value and moves RSP back up. The stack grows toward <i>lower</i> addresses, which is why RSP starts at 0x8000 and goes down. Pop in the opposite order and you swap two registers.</p>`,
+  code:`mov rax, 1
+mov rbx, 2
+push rax
+push rbx
+pop rax           ; takes the LAST value pushed
+pop rbx
+hlt`, predict:{reg:'rax', q:'After the two pops, what is in RAX?'} },
+
+{ nav:'Functions', title:'Functions with call and ret',
+  body:`<p><code>call square</code> does two things: it pushes the <b>return address</b> (the next line) onto the stack, then jumps to <code>square</code>. When the function finishes, <code>ret</code> pops that address and jumps back.</p>
+<p>On Linux, the System V calling convention passes the first argument in <code>RDI</code> and returns the result in <code>RAX</code>. Watch the stack while the function runs.</p>`,
+  code:`mov rdi, 6        ; argument
+call square
+mov rbx, rax      ; save the result
+hlt
+
+square:           ; rax = rdi * rdi
+mov rax, rdi
+imul rax, rdi
+ret`, predict:{reg:'rbx', q:'What number does RBX hold at the end?'} },
+
+{ nav:'Memory', title:'Reading an array from memory',
+  body:`<p><code>nums: dq 4, 8, 15, 16, 23</code> stores five 8-byte numbers ("quad-words") in memory. Square brackets mean "the value at this address", so <code>[nums + rsi*8]</code> reads element number RSI. The <code>*8</code> is there because each element is 8 bytes wide.</p>
+<p><code>cmp</code> subtracts without saving the result. It only sets flags. <code>jl</code> then jumps if the first value was less than the second.</p>`,
+  code:`nums: dq 4, 8, 15, 16, 23
+
+mov rsi, 0        ; index
+mov rax, 0        ; sum
+next:
+add rax, [nums + rsi*8]
+inc rsi
+cmp rsi, 5
+jl next           ; loop while rsi < 5
+hlt`, predict:{reg:'rax', q:'What is the sum in RAX when the loop finishes?'} },
+
+{ nav:'Bits', title:'Thinking in bits',
+  body:`<p>Every value is binary. Keep your eye on the bit lights. <code>shl</code> shifts bits left, and each shift doubles the number. <code>or</code> turns bits on. <code>and</code> keeps only the bits that are on in both values.</p>
+<p><code>xor rax, rax</code> always gives 0. Compilers use it to clear a register because the instruction is shorter than <code>mov rax, 0</code>.</p>`,
+  code:`mov rax, 1
+shl rax, 3        ; shift left 3 places
+or  rax, 3        ; turn on the two lowest bits
+and rax, 6        ; keep only bits set in 0b0110
+mov rbx, rax
+xor rax, rax      ; zero RAX
+hlt`, predict:{reg:'rbx', q:'What number is in RBX at the end?'} },
+
+{ nav:'Sandbox', title:'Sandbox: write your own',
+  body:`<p>Click <b>Edit code</b> and write anything. Supported instructions: <code>mov lea add sub imul inc dec neg and or xor shl shr cmp jmp je jz jne jnz jg jge jl jle ja jb push pop call ret nop hlt</code>.</p>
+<p>Registers: <code>rax rbx rcx rdx rsi rdi rbp rsp</code>. Data: <code>name: dq 1, 2, 3</code>. Memory operands: <code>[name + reg*8 + 16]</code>. Numbers can be decimal, <code>0x</code> hex or <code>0b</code> binary. The starter program walks through the Fibonacci numbers.</p>`,
+  code:`; Fibonacci: RAX walks 0 1 1 2 3 5 8 13 ...
+mov rax, 0
+mov rbx, 1
+mov rcx, 10       ; how many steps
+fib:
+mov rdx, rax
+add rdx, rbx
+mov rax, rbx
+mov rbx, rdx
+dec rcx
+jnz fib
+hlt`, predict:null }
+];
+
+const REGS=['rax','rbx','rcx','rdx','rsi','rdi','rbp','rsp'];
+const NOTE={rax:'result',rbx:'saved',rcx:'counter',rdx:'data',rsi:'source',rdi:'1st arg',rbp:'frame',rsp:'stack top'};
+const OPS={mov:2,lea:2,add:2,sub:2,cmp:2,and:2,or:2,xor:2,imul:2,shl:2,shr:2,inc:1,dec:1,neg:1,push:1,pop:1,jmp:1,je:1,jz:1,jne:1,jnz:1,jg:1,jge:1,jl:1,jle:1,ja:1,jb:1,call:1,ret:0,nop:0,hlt:0};
+const JUMPS={jmp:[()=>true,''],je:[f=>f.ZF,'ZF = 1 (equal)'],jz:[f=>f.ZF,'ZF = 1 (zero)'],jne:[f=>!f.ZF,'ZF = 0 (not equal)'],jnz:[f=>!f.ZF,'ZF = 0 (not zero)'],
+  jg:[f=>!f.ZF&&f.SF===f.OF,'"greater" (ZF = 0 and SF = OF)'],jge:[f=>f.SF===f.OF,'"greater or equal" (SF = OF)'],jl:[f=>f.SF!==f.OF,'"less" (SF ≠ OF)'],
+  jle:[f=>f.ZF||f.SF!==f.OF,'"less or equal" (ZF = 1 or SF ≠ OF)'],ja:[f=>!f.CF&&!f.ZF,'"above", unsigned (CF = 0 and ZF = 0)'],jb:[f=>f.CF,'"below", unsigned (CF = 1)']};
+const STACK_TOP=0x8000n, DATA_BASE=0x1000, MAX_STEPS=5000;
+const I64=v=>BigInt.asIntN(64,v), U64=v=>BigInt.asUintN(64,v);
+const hex=v=>'0x'+U64(BigInt(v)).toString(16).toUpperCase();
+const esc=s=>s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const $=id=>document.getElementById(id);
+
+function parseNum(s){
+  s=s.trim(); let neg=false;
+  if(s[0]==='-'){neg=true;s=s.slice(1).trim()}
+  if(!/^(0x[0-9a-f]+|0b[01]+|\d+)$/i.test(s)) return null;
+  const v=BigInt(s.toLowerCase()); return neg?-v:v;
+}
+class AsmError extends Error{constructor(line,msg){super(msg);this.line=line}}
+
+function parseOperand(s,li){
+  s=s.trim().replace(/^qword\s+/i,''); const low=s.toLowerCase();
+  if(REGS.includes(low)) return {k:'reg',r:low};
+  if(/^\[.+\]$/.test(s)) return {k:'mem',expr:s.slice(1,-1).trim()};
+  const n=parseNum(s); if(n!==null) return {k:'imm',v:n};
+  if(/^[a-z_.][\w.]*$/i.test(s)) return {k:'label',name:low};
+  throw new AsmError(li,`"${s}" is not a register, number, memory operand or label.`);
+}
+
+function parse(src){
+  const lines=src.split('\n'), prog=[], labels={}, data=[], dataLabels={}; let addr=DATA_BASE;
+  lines.forEach((raw,li)=>{
+    let line=raw.replace(/;.*$/,'').trim(); if(!line) return;
+    let m=line.match(/^([a-z_.][\w.]*):?\s+dq\s+(.+)$/i);
+    if(m){
+      const name=m[1].toLowerCase(); dataLabels[name]=addr;
+      m[2].split(',').forEach((t,i)=>{const v=parseNum(t); if(v===null) throw new AsmError(li,`"${t.trim()}" is not a number.`); data.push({addr,v:I64(v),label:name,idx:i}); addr+=8});
+      return;
+    }
+    m=line.match(/^([a-z_.][\w.]*):(.*)$/i);
+    if(m){ const name=m[1].toLowerCase(); if(name in labels) throw new AsmError(li,`Label "${name}" is defined twice.`); labels[name]=prog.length; line=m[2].trim(); if(!line) return; }
+    const sp=line.search(/\s/), op=(sp<0?line:line.slice(0,sp)).toLowerCase(), rest=sp<0?'':line.slice(sp).trim();
+    if(!(op in OPS)) throw new AsmError(li,`Unknown instruction "${op}". See the Sandbox lesson for the supported list.`);
+    const args=rest?rest.split(',').map(a=>parseOperand(a,li)):[];
+    if(args.length!==OPS[op]) throw new AsmError(li,`"${op}" takes ${OPS[op]} operand${OPS[op]===1?'':'s'}, but got ${args.length}.`);
+    const [a,b]=args;
+    if(op in JUMPS||op==='call'){ if(a.k!=='label') throw new AsmError(li,`"${op}" needs a label to jump to.`); }
+    else{
+      args.forEach(o=>{ if(o.k==='label') throw new AsmError(li,`"${o.name}" looks like a label. Use [${o.name}] to read memory there.`)});
+      if(['mov','lea','add','sub','and','or','xor','imul','shl','shr','inc','dec','neg','pop'].includes(op)&&a.k==='imm') throw new AsmError(li,`You can't write into a plain number. The first operand of "${op}" must be a register or memory.`);
+      if(b&&a.k==='mem'&&b.k==='mem') throw new AsmError(li,`x86 can't use two memory operands in one instruction. Load one into a register first.`);
+      if(op==='lea'&&(a.k!=='reg'||b.k!=='mem')) throw new AsmError(li,`"lea" needs a register and a [memory] expression.`);
+      if(op==='imul'&&a.k!=='reg') throw new AsmError(li,`"imul" needs a register as its first operand.`);
+    }
+    prog.push({op,args,line:li,text:line});
+  });
+  const P={prog,labels,data,dataLabels,lines};
+  prog.forEach(ins=>{
+    if((ins.op in JUMPS||ins.op==='call')&&!(ins.args[0].name in labels)) throw new AsmError(ins.line,`There is no label called "${ins.args[0].name}".`);
+    ins.args.forEach(o=>{ if(o.k==='mem'){ try{evalAddr(o.expr,{regs:Object.fromEntries(REGS.map(r=>[r,0n]))},P)}catch(e){throw new AsmError(ins.line,e.message)} }});
+  });
+  return P;
+}
+
+function evalAddr(expr,S,P){
+  const term=t=>{ const low=t.toLowerCase();
+    if(REGS.includes(low)) return S.regs[low];
+    const n=parseNum(t); if(n!==null) return n;
+    if(low in P.dataLabels) return BigInt(P.dataLabels[low]);
+    throw new Error(`Unknown name "${t}" inside [ ].`); };
+  let total=0n;
+  expr.replace(/\s+/g,'').replace(/-/g,'+-').split('+').filter(Boolean).forEach(t=>{
+    let neg=false; if(t[0]==='-'){neg=true;t=t.slice(1)}
+    const m=t.match(/^([\w.]+)\*([\w.]+)$/); const v=m?term(m[1])*term(m[2]):term(t);
+    total+=neg?-v:v; });
+  return total;
+}
+
+function fresh(P){
+  const S={regs:Object.fromEntries(REGS.map(r=>[r,0n])),flags:{ZF:0,SF:0,CF:0,OF:0},mem:new Map(),ret:new Set(),ip:0,halted:false,steps:0,lastDst:'rax'};
+  S.regs.rsp=STACK_TOP; P.data.forEach(d=>S.mem.set(d.addr,d.v)); return S;
+}
+function arith(S,x,y,raw,sub){
+  const r=I64(raw); const f=S.flags; f.ZF=+(r===0n); f.SF=+(r<0n);
+  const ux=U64(x),uy=U64(y); f.CF=sub?+(ux<uy):+(ux+uy>=(1n<<64n));
+  const sx=x<0n,sy=y<0n,sr=r<0n; f.OF=sub?+(sx!==sy&&sr!==sx):+(sx===sy&&sr!==sx); return r;
+}
+function logic(S,raw){const r=I64(raw); Object.assign(S.flags,{ZF:+(r===0n),SF:+(r<0n),CF:0,OF:0}); return r}
+function flagNote(f){
+  const p=[]; if(f.ZF)p.push('ZF on: the result is zero'); if(f.SF)p.push('SF on: the result is negative'); if(f.CF)p.push('CF on: unsigned carry or borrow'); if(f.OF)p.push('OF on: signed overflow');
+  return p.length?' '+p.join('. ')+'.':' All flags are off: the result is positive and not zero.';
+}
+const bin=(v,w)=>{const s=U64(v).toString(2); return '0b'+(s.length>w?s:s.padStart(w,'0'))};
+
+function step(S,P){
+  const ev={flights:[],regs:new Set(),mem:new Set(),flagsBefore:{...S.flags},narr:'',alu:null,ins:null};
+  if(S.ip>=P.prog.length){S.halted=true;ev.end=true;ev.narr='The CPU ran past the last instruction, so the program is over.';return ev}
+  const ins=P.prog[S.ip]; ev.ins=ins; const [a,b]=ins.args; let next=S.ip+1;
+  const addrOf=o=>Number(U64(evalAddr(o.expr,S,P)));
+  const loc=o=>o.k==='reg'?{reg:o.r}:o.k==='mem'?{mem:addrOf(o)}:{line:ins.line};
+  const nm=o=>o.k==='reg'?o.r.toUpperCase():o.k==='imm'?o.v.toString():`[${o.expr}] (address ${hex(addrOf(o))})`;
+  const read=o=>{ if(o.k==='reg')return S.regs[o.r]; if(o.k==='imm')return I64(o.v); const ad=addrOf(o); ev.mem.add(ad); return S.mem.get(ad)??0n };
+  const write=(o,v)=>{ v=I64(v); if(o.k==='reg'){S.regs[o.r]=v;ev.regs.add(o.r);if(o.r!=='rsp')S.lastDst=o.r} else {const ad=addrOf(o);S.mem.set(ad,v);ev.mem.add(ad)} return v };
+  const fly=(from,to,v)=>ev.flights.push({from,to,text:String(v)});
+  const op=ins.op;
+  switch(op){
+    case 'mov':{ const v=read(b); fly(loc(b),loc(a),v); write(a,v);
+      ev.narr= b.k==='imm'?`Put ${v} into ${nm(a)}.`:`Copied ${v} from ${nm(b)} into ${nm(a)}.`+(b.k==='reg'?` ${nm(b)} still holds ${v}, because mov copies.`:''); break }
+    case 'lea':{ const v=evalAddr(b.expr,S,P); write(a,v); fly({line:ins.line},loc(a),hex(v));
+      ev.narr=`Calculated the address ${b.expr} = ${hex(v)} and put it in ${nm(a)}. lea only does the math; it never reads memory.`; break }
+    case 'add': case 'sub': case 'cmp':{ const x=read(a), y=read(b), sub=op!=='add';
+      const r=arith(S,x,y,sub?x-y:x+y,sub); const sym=sub?'−':'+';
+      ev.alu=`${x} ${sym} ${y} = ${r}`;
+      if(op==='cmp'){ fly(loc(b),{alu:1},y); ev.narr=`Compared ${nm(a)} (${x}) with ${y}: the CPU worked out ${x} − ${y} = ${r}, threw the answer away and kept only the flags.`+flagNote(S.flags); }
+      else { fly(loc(b),loc(a),y); write(a,r); ev.narr=`${nm(a)} = ${x} ${sym} ${y} = ${r}.`+flagNote(S.flags); }
+      break }
+    case 'and': case 'or': case 'xor':{ const x=read(a), y=read(b);
+      const r=logic(S,op==='and'?x&y:op==='or'?x|y:x^y); const w=Math.max(4,U64(x|y|r).toString(2).length);
+      fly(loc(b),loc(a),y); write(a,r); ev.alu=`${bin(x,w)} ${op.toUpperCase()} ${bin(y,w)} = ${bin(r,w)}`;
+      ev.narr= op==='xor'&&b.k==='reg'&&a.k==='reg'&&a.r===b.r ? `XOR of a value with itself is always 0, so ${nm(a)} is now 0. This is the classic way to clear a register.`
+        : `${nm(a)} = ${x} ${op.toUpperCase()} ${y} = ${r}. ${op==='and'?'Only bits that were 1 in both values survive.':op==='or'?'Any bit that was 1 in either value is now 1.':'Bits that differ become 1; bits that match become 0.'}`+flagNote(S.flags);
+      break }
+    case 'imul':{ const x=read(a), y=read(b), r=I64(x*y); fly(loc(b),loc(a),y); write(a,r); ev.alu=`${x} × ${y} = ${r}`; ev.narr=`${nm(a)} = ${x} × ${y} = ${r}.`; break }
+    case 'shl': case 'shr':{ const x=read(a), n=BigInt(Number(U64(read(b)))&63);
+      const raw=op==='shl'?x<<n:U64(x)>>n; const r=logic(S,raw);
+      if(n>0n) S.flags.CF=Number(op==='shl'?(U64(x)>>(64n-n))&1n:(U64(x)>>(n-1n))&1n);
+      write(a,r); const w=Math.max(4,U64(x|r).toString(2).length);
+      ev.alu=`${bin(x,w)} ${op==='shl'?'<<':'>>'} ${n} = ${bin(r,w)}`;
+      ev.narr=`Shifted ${nm(a)} ${op==='shl'?'left':'right'} by ${n}: ${x} became ${r}. Each shift ${op==='shl'?'left doubles':'right halves'} the number.`; break }
+    case 'inc': case 'dec':{ const x=read(a), cf=S.flags.CF, r=arith(S,x,1n,op==='inc'?x+1n:x-1n,op==='dec'); S.flags.CF=cf; write(a,r);
+      ev.alu=`${x} ${op==='inc'?'+':'−'} 1 = ${r}`; ev.narr=`${op==='inc'?'Added 1 to':'Subtracted 1 from'} ${nm(a)}: now ${r}.`+flagNote(S.flags); break }
+    case 'neg':{ const x=read(a), r=arith(S,0n,x,-x,true); write(a,r); ev.alu=`−(${x}) = ${r}`; ev.narr=`Flipped the sign of ${nm(a)}: ${x} became ${r}.`; break }
+    case 'push':{ const v=read(a); fly(loc(a),{stack:1},v); S.regs.rsp=I64(S.regs.rsp-8n); const ad=Number(U64(S.regs.rsp)); S.mem.set(ad,v); S.ret.delete(ad);
+      ev.regs.add('rsp'); ev.pushed=ad; ev.narr=`RSP moved down 8 bytes to ${hex(ad)}, and ${v} was written into that slot.`; break }
+    case 'pop':{ if(S.regs.rsp>=STACK_TOP) throw new Error('pop on an empty stack. There is nothing to take off.');
+      const ad=Number(U64(S.regs.rsp)), v=S.mem.get(ad)??0n; fly({mem:ad},loc(a),v); S.ret.delete(ad);
+      S.regs.rsp=I64(S.regs.rsp+8n); ev.regs.add('rsp'); write(a,v);
+      ev.narr=`Took ${v} off the top of the stack into ${nm(a)}, and RSP moved back up to ${hex(S.regs.rsp)}.`; break }
+    case 'call':{ S.regs.rsp=I64(S.regs.rsp-8n); const ad=Number(U64(S.regs.rsp)); S.mem.set(ad,BigInt(next)); S.ret.add(ad); ev.regs.add('rsp'); ev.pushed=ad;
+      fly({line:ins.line},{stack:1},`↩ line ${lineOf(P,next)}`); next=P.labels[a.name];
+      ev.narr=`Pushed the return address (line ${lineOf(P,S.ip+1)}) onto the stack, then jumped into "${a.name}".`; break }
+    case 'ret':{ if(S.regs.rsp>=STACK_TOP){ S.halted=true; ev.end=true; ev.narr='ret with an empty stack. In a real program this would return to the operating system, so the program is done.'; break }
+      const ad=Number(U64(S.regs.rsp)), t=S.mem.get(ad)??0n; fly({mem:ad},{reg:'rip'},`line ${lineOf(P,Number(t))}`); S.ret.delete(ad);
+      S.regs.rsp=I64(S.regs.rsp+8n); ev.regs.add('rsp'); next=Number(t); ev.narr=`Popped the return address and jumped back to line ${lineOf(P,next)}.`; break }
+    case 'nop': ev.narr='nop does nothing. It just takes up a slot.'; break;
+    case 'hlt': S.halted=true; ev.end=true; ev.narr='hlt: the CPU stops. The program is finished.'; break;
+    default:{ const [cond,why]=JUMPS[op], taken=cond(S.flags);
+      if(taken) next=P.labels[a.name];
+      ev.narr= op==='jmp'?`Jumped to "${a.name}" unconditionally.`: taken?`${op}: ${why} is true, so the CPU jumps to "${a.name}".`:`${op}: ${why} is false, so the CPU moves on to the next line.`;
+      ev.jump=taken; }
+  }
+  S.ip=next; S.steps++;
+  if(S.steps>=MAX_STEPS&&!S.halted) throw new Error(`Stopped after ${MAX_STEPS} steps. This looks like an infinite loop.`);
+  return ev;
+}
+const lineOf=(P,i)=>i<P.prog.length?P.prog[i].line+1:'end';
+
+/* ---------- UI ---------- */
+let cur=0, P=null, S=null, busy=false, running=false, parseErr=null, editing=false;
+const edits={}; let done=new Set();
+try{ done=new Set(JSON.parse(localStorage.getItem('reglab-done')||'[]')); const c=+localStorage.getItem('reglab-cur'); if(c>=0&&c<LESSONS.length) cur=c }catch(e){}
+const save=()=>{ try{ localStorage.setItem('reglab-done',JSON.stringify([...done])); localStorage.setItem('reglab-cur',String(cur)) }catch(e){} };
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+const DUR=[1200,800,520,300,140], GAP=[650,420,260,120,30];
+const speed=()=>+$('speed').value-1;
+const src=()=>edits[cur]??LESSONS[cur].code;
+
+function hl(raw){
+  if(!raw.trim()) return ' ';
+  const ci=raw.indexOf(';'), code=ci>=0?raw.slice(0,ci):raw, cmt=ci>=0?raw.slice(ci):'';
+  let out='', seenOp=false;
+  (code.match(/[A-Za-z_.][\w.]*:?|0x[0-9a-fA-F]+|0b[01]+|\d+|\s+|./g)||[]).forEach(t=>{
+    const e=esc(t);
+    if(/^[A-Za-z_.]/.test(t)){
+      if(t.endsWith(':')) out+=`<span class="t-lbl">${e}</span>`;
+      else if(!seenOp){seenOp=true; out+=`<span class="t-op">${e}</span>`}
+      else if(REGS.includes(t.toLowerCase())) out+=`<span class="t-reg">${e}</span>`;
+      else if(/^(dq|qword)$/i.test(t)) out+=`<span class="t-op">${e}</span>`;
+      else out+=`<span class="t-ref">${e}</span>`;
+    } else if(/^\d|^0[xb]/.test(t)) out+=`<span class="t-num">${e}</span>`;
+    else out+=e;
+  });
+  return out+(cmt?`<span class="t-cmt">${esc(cmt)}</span>`:'');
+}
+
+function buildNav(){
+  $('nav').innerHTML=LESSONS.map((l,i)=>`<button type="button" data-i="${i}" class="${i===cur?'active':''} ${done.has(i)?'done':''}"><span class="n">${i+1}</span>${l.nav}</button>`).join('');
+}
+$('nav').addEventListener('click',e=>{const b=e.target.closest('button'); if(b) loadLesson(+b.dataset.i)});
+
+function buildRegs(){
+  $('regs').innerHTML=REGS.map(r=>`<div class="reg" id="reg-${r}"><div class="nm">${r.toUpperCase()}<small>${NOTE[r]}</small></div><div class="v"></div><div class="h"></div></div>`).join('')
+   +`<div class="reg rip" id="reg-rip"><div class="nm">RIP<small>next instruction</small></div><div class="v"></div><div class="h"></div></div>`;
+  $('flags').innerHTML=[['ZF','zero'],['SF','sign'],['CF','carry'],['OF','overflow']].map(([f,n])=>`<div class="flag" id="flag-${f}"><i></i>${f}<span>${n}</span></div>`).join('');
+}
+
+function renderRegs(changed){
+  REGS.forEach(r=>{
+    const el=$('reg-'+r), v=S.regs[r];
+    el.querySelector('.v').textContent= r==='rsp'?hex(v):v.toString();
+    el.querySelector('.h').textContent= r==='rsp'?`${8*Math.max(0,Number((STACK_TOP-v)/8n))/8} slot(s) used`:hex(v);
+    el.classList.toggle('zero',v===0n);
+    if(changed&&changed.has(r)){el.classList.remove('hot');void el.offsetWidth;el.classList.add('hot')}
+  });
+  const rip=$('reg-rip');
+  rip.querySelector('.v').textContent= S.halted?'halted':`line ${lineOf(P,S.ip)}`;
+  rip.querySelector('.h').textContent= S.halted||S.ip>=P.prog.length?'—':P.prog[S.ip].text;
+  if(changed){rip.classList.remove('hot');void rip.offsetWidth;rip.classList.add('hot')}
+}
+function renderFlags(before){
+  Object.entries(S.flags).forEach(([f,v])=>{const el=$('flag-'+f); el.classList.toggle('on',!!v);
+    if(before&&before[f]!==v){el.classList.remove('pulse');void el.offsetWidth;el.classList.add('pulse')}});
+}
+function renderStack(ev){
+  const top=Number(U64(S.regs.rsp)), end=Number(STACK_TOP); const rows=[];
+  for(let ad=top; ad<end && rows.length<64; ad+=8){
+    const v=S.mem.get(ad)??0n, isRet=S.ret.has(ad);
+    rows.push(`<div class="cell ${ad===top?'top':''} ${ev&&ev.pushed===ad?'new':''} ${ev&&ev.mem.has(ad)&&ev.pushed!==ad?'touch':''}" id="mem-${ad}"><span class="addr">${hex(ad)}</span><span class="lbl">${isRet?'return addr':''}</span><span class="val">${isRet?'↩ line '+lineOf(P,Number(v)):v}</span>${ad===top?'<span class="ptr">◀ RSP points here</span>':''}</div>`);
+  }
+  $('stack').innerHTML=rows.length?rows.join(''):`<p class="empty">Empty. RSP = ${hex(S.regs.rsp)}, the top of the stack area.</p>`;
+}
+function renderMem(ev){
+  $('mem').innerHTML=P.data.length?P.data.map(d=>`<div class="cell ${ev&&ev.mem.has(d.addr)?'touch':''}" id="mem-${d.addr}"><span class="addr">${hex(d.addr)}</span><span class="lbl">${d.label}[${d.idx}]</span><span class="val">${S.mem.get(d.addr)??0n}</span></div>`).join('')
+    :`<p class="empty">This program has no data. Lesson 6 stores an array with <code>dq</code>.</p>`;
+}
+function renderBits(){
+  const r=S.lastDst, v=U64(S.regs[r]); $('bitsTitle').textContent=`Bits of ${r.toUpperCase()}`;
+  let html=''; for(let n=3;n>=0;n--){ html+='<div class="nib">'; for(let b=n*4+3;b>=n*4;b--){ const on=(v>>BigInt(b))&1n; html+=`<div class="bit ${on?'on':''}"><i></i>${b}</div>` } html+='</div>' }
+  $('bits').innerHTML=html;
+  $('bitsNote').textContent=`= ${S.regs[r]} decimal · ${bin(v&0xFFFFn,16)}`+(v>0xFFFFn?' · higher bits not shown':'');
+}
+function renderListing(){
+  const errLine=parseErr?parseErr.line:-1, curLine=P&&!S.halted&&S.ip<P.prog.length?P.prog[S.ip].line:-1;
+  $('listing').innerHTML=src().split('\n').map((l,i)=>`<li id="ln-${i}" class="${i===curLine?'cur':''} ${i===errLine?'bad':''}"><span class="ln">${i+1}</span><span class="src">${hl(l)}</span></li>`).join('');
+}
+function setNarr(html,cls=''){ const n=$('narr'); n.className='narrator '+cls; n.innerHTML=html }
+function renderAll(ev){
+  renderRegs(ev&&ev.regs); renderFlags(ev&&ev.flagsBefore); renderStack(ev); renderMem(ev); renderBits(); renderListing();
+  const alu=$('alu');
+  if(ev&&ev.alu){ alu.className='alu'; alu.textContent=ev.alu; void alu.offsetWidth; alu.classList.add('flash') }
+  else if(!ev){ alu.className='alu idle'; alu.textContent='Idle. Math shows its work here.' }
+  updateButtons();
+}
+function updateButtons(){
+  const dead=!P||S.halted||editing;
+  $('stepBtn').disabled=dead||running; $('runBtn').disabled=dead&&!running; $('runBtn').textContent=running?'Pause':'Run';
+  $('resetBtn').disabled=!P||editing;
+}
+
+function locEl(l){
+  if(!l) return null;
+  if(l.reg) return $('reg-'+l.reg);
+  if(l.line!==undefined) return $('ln-'+l.line);
+  if(l.mem!==undefined) return $('mem-'+l.mem)||$('memPanel');
+  if(l.stack) return $('stack').firstElementChild||$('stack');
+  if(l.alu) return $('alu');
+}
+function fly(from,to,text,dur){
+  if(reduce||!from||!to) return Promise.resolve();
+  const a=from.getBoundingClientRect(), b=to.getBoundingClientRect(); if(!a.width||!b.width) return Promise.resolve();
+  const c=document.createElement('div'); c.className='flyer'; c.textContent=text; $('layer').appendChild(c);
+  const w=c.offsetWidth,h=c.offsetHeight;
+  const x0=a.left+a.width/2-w/2,y0=a.top+a.height/2-h/2,x1=b.left+b.width/2-w/2,y1=b.top+b.height/2-h/2,mx=(x0+x1)/2,my=Math.min(y0,y1)-50;
+  const an=c.animate([{transform:`translate(${x0}px,${y0}px) scale(.5)`,opacity:0},{transform:`translate(${x0}px,${y0}px) scale(1)`,opacity:1,offset:.14},
+    {transform:`translate(${mx}px,${my}px) scale(1.12)`,offset:.55},{transform:`translate(${x1}px,${y1}px) scale(1)`,opacity:1,offset:.88},{transform:`translate(${x1}px,${y1}px) scale(.6)`,opacity:0}],
+    {duration:dur,easing:'cubic-bezier(.45,0,.25,1)'});
+  return an.finished.catch(()=>{}).then(()=>c.remove());
+}
+
+async function doStep(){
+  if(busy||!P||S.halted||editing) return;
+  busy=true; updateButtons();
+  let ev;
+  try{ ev=step(S,P) }catch(e){ S.halted=true; running=false; busy=false; renderAll(null); setNarr(`<span class="ins">Runtime error</span>${esc(e.message)}`,'error'); return }
+  if(ev.ins){ const li=$('ln-'+ev.ins.line); if(li){li.classList.remove('ran');void li.offsetWidth;li.classList.add('ran')} }
+  await Promise.all(ev.flights.map(f=>fly(locEl(f.from),locEl(f.to),f.text,DUR[speed()])));
+  renderAll(ev);
+  let html=(ev.ins?`<span class="ins">${esc(ev.ins.text)}</span>`:'')+esc(ev.narr);
+  if(S.halted) html+=` <b>Finished in ${S.steps} step${S.steps===1?'':'s'}.</b> Press Reset to run it again.`;
+  setNarr(html,S.halted?'end':'');
+  busy=false; updateButtons();
+}
+async function run(){
+  if(running){running=false;updateButtons();return}
+  running=true; updateButtons();
+  while(running&&!S.halted){ await doStep(); if(!running) break; await new Promise(r=>setTimeout(r,GAP[speed()])) }
+  running=false; updateButtons();
+}
+
+function loadProgram(){
+  running=false; parseErr=null;
+  try{ P=parse(src()); S=fresh(P); renderAll(null);
+    setNarr(`<span class="ins">Ready</span>The highlighted line runs next. Press <b>Step</b> to execute it, or <b>Run</b> to play the whole program.`);
+  }catch(e){
+    if(!(e instanceof AsmError)) throw e;
+    parseErr=e; P=null; renderListing(); updateButtons();
+    setNarr(`<span class="ins">Line ${e.line+1}</span>${esc(e.message)} Click Edit code to fix it.`,'error');
+  }
+}
+function loadLesson(i){
+  if(editing) toggleEdit(true);
+  cur=i; save(); const L=LESSONS[i];
+  $('eyebrow').textContent=`Lesson ${i+1} of ${LESSONS.length}`; $('ltitle').textContent=L.title; $('lbody').innerHTML=L.body;
+  $('fname').textContent=`lesson${i+1}.asm${edits[i]!==undefined?' (edited)':''}`;
+  $('predict').hidden=!L.predict; if(L.predict){ $('pq').textContent=L.predict.q; $('pin').value=''; $('verdict').textContent=''; $('verdict').className='verdict' }
+  $('nextBtn').hidden=i===LESSONS.length-1;
+  buildNav(); loadProgram();
+}
+function toggleEdit(discard){
+  editing=!editing;
+  if(editing){ running=false; $('editor').value=src(); $('editor').hidden=false; $('listing').hidden=true; $('editBtn').textContent='Load code'; $('editor').focus() }
+  else{ if(!discard){ const v=$('editor').value; if(v!==LESSONS[cur].code) edits[cur]=v; else delete edits[cur] }
+    $('editor').hidden=true; $('listing').hidden=false; $('editBtn').textContent='Edit code';
+    $('fname').textContent=`lesson${cur+1}.asm${edits[cur]!==undefined?' (edited)':''}`; loadProgram() }
+  updateButtons();
+}
+
+$('stepBtn').onclick=doStep; $('runBtn').onclick=run;
+$('resetBtn').onclick=()=>{running=false; const wait=()=>busy?setTimeout(wait,50):loadProgram(); wait()};
+$('editBtn').onclick=()=>toggleEdit(false);
+$('nextBtn').onclick=()=>{loadLesson(Math.min(cur+1,LESSONS.length-1)); scrollTo({top:0,behavior:reduce?'auto':'smooth'})};
+$('editor').addEventListener('keydown',e=>{ if(e.key==='Tab'){e.preventDefault(); const t=e.target,s=t.selectionStart; t.setRangeText('    ',s,t.selectionEnd,'end')} });
+document.addEventListener('keydown',e=>{ if(e.key==='ArrowRight'&&!/INPUT|TEXTAREA/.test(document.activeElement?.tagName||'')){e.preventDefault();doStep()} });
+
+$('pform').addEventListener('submit',e=>{
+  e.preventDefault(); const L=LESSONS[cur], v=$('verdict'), guess=parseNum($('pin').value);
+  if(guess===null){v.className='verdict no';v.textContent='Type a whole number, like 12 or -3.';return}
+  if(!P){v.className='verdict no';v.textContent='Fix the code error first.';return}
+  const s=fresh(P); try{ while(!s.halted) step(s,P) }catch(err){ v.className='verdict no'; v.textContent='This program stops with an error, so there is no final value to check.'; return }
+  const ans=s.regs[L.predict.reg];
+  if(I64(guess)===ans){ v.className='verdict ok'; v.textContent=`Correct. ${L.predict.reg.toUpperCase()} ends at ${ans}.`; done.add(cur); save(); buildNav() }
+  else { v.className='verdict no'; v.textContent=`Not quite. Step through the program and keep your eye on ${L.predict.reg.toUpperCase()}.` }
+});
+
+buildRegs(); loadLesson(cur);
+</script>
+</body>
+</html>
